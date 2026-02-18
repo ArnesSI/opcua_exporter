@@ -28,6 +28,7 @@ Usage of opcua_exporter:
       --config string               Path to a file from which to read the list of OPC UA nodes to monitor
       --debug                       Enable debug logging
       --endpoint string             OPC UA Endpoint to connect to. (default "opc.tcp://localhost:4096")
+      --ignore-server-endpoint      Ignore endpoint URL provided by server during discovery phase. Some miss-configured servers provide unreslovable URLs.
       --max-timeouts int            The exporter will quit trying after this many read timeouts (0 to disable).
       --node stringArray            Node mapping in format 'nodeId,metricName[,extractBit]' (can be repeated)
       --password string             Password for username/password authentication
@@ -234,6 +235,7 @@ All configuration options can be set via environment variables with the `OPCUA_E
 |---------------------|-----------------|-------------|---------|
 | `OPCUA_EXPORTER_PORT` | `--port` | Port to publish metrics on | `9686` |
 | `OPCUA_EXPORTER_ENDPOINT` | `--endpoint` | OPC UA Endpoint to connect to | `opc.tcp://localhost:4096` |
+| `OPCUA_EXPORTER_IGNORE_SERVER_ENDPOINT` | `--ignore-server-endpoint` | Ignore endpoint URL provided by server during discovery phase. Some miss-configured servers provide unreslovable URLs. | `false` |
 | `OPCUA_EXPORTER_PROM_PREFIX` | `--prom-prefix` | Prefix for emitted prometheus metrics | _(empty)_ |
 | `OPCUA_EXPORTER_CONFIG` | `--config` | Path to node config file | _(empty)_ |
 | `OPCUA_EXPORTER_DEBUG` | `--debug` | Enable debug logging | `false` |
