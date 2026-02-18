@@ -46,7 +46,7 @@ func (m *Manager) Connect(ctx context.Context) (*opcua.Client, error) {
 		}
 
 		// For secure connections, discover endpoints first
-		if m.securityConfig.SecurityMode != security.SecurityModeNone {
+		if m.securityConfig.SecurityMode != security.SecurityModeNone || m.securityConfig.AuthMode != security.AuthModeAnonymous {
 			client, err := m.connectWithEndpointDiscovery(ctx)
 			if err != nil {
 				log.Printf("Secure connection failed: %v", err)
@@ -171,7 +171,7 @@ func (m *Manager) connectWithEndpointDiscovery(ctx context.Context) (*opcua.Clie
 	}
 
 	// Step 2: Connect discovery client to get endpoints
-	if err := discoveryClient.Connect(ctx); err != nil {
+	if err := discoveryClient.Dial(ctx); err != nil {
 		return nil, fmt.Errorf("failed to connect discovery client: %w", err)
 	}
 	defer discoveryClient.Close(ctx) // Clean up discovery client
