@@ -16,20 +16,22 @@ import (
 
 // Manager handles OPC UA client connection with automatic retry logic
 type Manager struct {
-	client         *opcua.Client
-	endpoint       string
-	securityConfig config.SecurityConfig
-	timeouts       config.ConnectionTimeouts
-	debug          bool
+	client               *opcua.Client
+	endpoint             string
+	ignoreServerEndpoint bool
+	securityConfig       config.SecurityConfig
+	timeouts             config.ConnectionTimeouts
+	debug                bool
 }
 
 // NewManager creates a new connection manager for the given endpoint and configuration
-func NewManager(endpoint string, securityConfig config.SecurityConfig, timeouts config.ConnectionTimeouts, debug bool) *Manager {
+func NewManager(endpoint string, ignoreServerEndpoint bool, securityConfig config.SecurityConfig, timeouts config.ConnectionTimeouts, debug bool) *Manager {
 	return &Manager{
-		endpoint:       endpoint,
-		securityConfig: securityConfig,
-		timeouts:       timeouts,
-		debug:          debug,
+		endpoint:             endpoint,
+		ignoreServerEndpoint: ignoreServerEndpoint,
+		securityConfig:       securityConfig,
+		timeouts:             timeouts,
+		debug:                debug,
 	}
 }
 
@@ -221,8 +223,16 @@ func (m *Manager) connectWithEndpointDiscovery(ctx context.Context) (*opcua.Clie
 		return nil, fmt.Errorf("failed to create secure client options: %w", err)
 	}
 
-	// Use the selected endpoint's URL
-	client, err := opcua.NewClient(selectedEndpoint.EndpointURL, options...)
+	var client *opcua.Client
+	if m.ignoreServerEndpoint {
+		// ignore endpoint provided by server
+		log.Printf("INFO: using our endpoint %s", m.endpoint)
+		client, err = opcua.NewClient(m.endpoint, options...)
+	} else {
+		// Use the selected endpoint's URL
+		log.Printf("INFO: using server endpoint %s", selectedEndpoint.EndpointURL)
+		client, err = opcua.NewClient(selectedEndpoint.EndpointURL, options...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secure OPC UA client: %w", err)
 	}

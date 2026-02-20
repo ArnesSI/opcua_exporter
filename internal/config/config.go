@@ -86,19 +86,20 @@ type ConnectionTimeouts struct {
 
 // Config holds all configuration values for the OPC UA exporter
 type Config struct {
-	Port                int                `yaml:"port" mapstructure:"port"`
-	Endpoint            string             `yaml:"endpoint" mapstructure:"endpoint"`
-	PromPrefix          string             `yaml:"promPrefix" mapstructure:"promPrefix"`
-	ConfigFile          string             `yaml:"configFile" mapstructure:"config"`
-	Debug               bool               `yaml:"debug" mapstructure:"debug"`
-	ReadTimeout         time.Duration      `yaml:"readTimeout" mapstructure:"readTimeout"`
-	MaxTimeouts         int                `yaml:"maxTimeouts" mapstructure:"maxTimeouts"`
-	BufferSize          int                `yaml:"bufferSize" mapstructure:"bufferSize"`
-	SummaryInterval     time.Duration      `yaml:"summaryInterval" mapstructure:"summaryInterval"`
-	SubscribeToTimeNode bool               `yaml:"subscribeToTimeNode" mapstructure:"subscribeToTimeNode"`
-	NodeMappings        []NodeMapping      `yaml:"nodes" mapstructure:"nodes"`
-	Security            SecurityConfig     `yaml:"security" mapstructure:"security"`
-	Timeouts            ConnectionTimeouts `yaml:"timeouts" mapstructure:"timeouts"`
+	Port                 int                `yaml:"port" mapstructure:"port"`
+	Endpoint             string             `yaml:"endpoint" mapstructure:"endpoint"`
+	IgnoreServerEndpoint bool               `yaml:"ignoreServerEndpoint" mapstructure:"ignoreServerEndpoint"`
+	PromPrefix           string             `yaml:"promPrefix" mapstructure:"promPrefix"`
+	ConfigFile           string             `yaml:"configFile" mapstructure:"config"`
+	Debug                bool               `yaml:"debug" mapstructure:"debug"`
+	ReadTimeout          time.Duration      `yaml:"readTimeout" mapstructure:"readTimeout"`
+	MaxTimeouts          int                `yaml:"maxTimeouts" mapstructure:"maxTimeouts"`
+	BufferSize           int                `yaml:"bufferSize" mapstructure:"bufferSize"`
+	SummaryInterval      time.Duration      `yaml:"summaryInterval" mapstructure:"summaryInterval"`
+	SubscribeToTimeNode  bool               `yaml:"subscribeToTimeNode" mapstructure:"subscribeToTimeNode"`
+	NodeMappings         []NodeMapping      `yaml:"nodes" mapstructure:"nodes"`
+	Security             SecurityConfig     `yaml:"security" mapstructure:"security"`
+	Timeouts             ConnectionTimeouts `yaml:"timeouts" mapstructure:"timeouts"`
 }
 
 // Load loads configuration from multiple sources in priority order:
@@ -115,6 +116,7 @@ func Load(configFile string) (*Config, error) {
 	// Set default values
 	v.SetDefault("port", 9686)
 	v.SetDefault("endpoint", "opc.tcp://localhost:4096")
+	v.SetDefault("ignoreServerEndpoint", false)
 	v.SetDefault("promPrefix", "")
 	v.SetDefault("debug", false)
 	v.SetDefault("readTimeout", 5*time.Second)
@@ -143,6 +145,7 @@ func Load(configFile string) (*Config, error) {
 	// Bind environment variables explicitly since viper's key replacer is tricky
 	v.BindEnv("port", "OPCUA_EXPORTER_PORT")
 	v.BindEnv("endpoint", "OPCUA_EXPORTER_ENDPOINT")
+	v.BindEnv("ignoreServerEndpoint", "OPCUA_EXPORTER_IGNORE_SERVER_ENDPOINT")
 	v.BindEnv("promPrefix", "OPCUA_EXPORTER_PROM_PREFIX")
 	v.BindEnv("debug", "OPCUA_EXPORTER_DEBUG")
 	v.BindEnv("readTimeout", "OPCUA_EXPORTER_READ_TIMEOUT")

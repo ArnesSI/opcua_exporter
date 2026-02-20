@@ -31,17 +31,18 @@ const (
 	timeNodeMetricName string = "opcua_server_time" // Metric name for server time
 
 	// Configuration flag names
-	flagPort                = "port"
-	flagEndpoint            = "endpoint"
-	flagPromPrefix          = "prom-prefix"
-	flagDebug               = "debug"
-	flagReadTimeout         = "read-timeout"
-	flagMaxTimeouts         = "max-timeouts"
-	flagBufferSize          = "buffer-size"
-	flagSummaryInterval     = "summary-interval"
-	flagSubscribeToTimeNode = "subscribe-to-time-node"
-	flagNode                = "node"
-	flagConfig              = "config"
+	flagPort                 = "port"
+	flagEndpoint             = "endpoint"
+	flagIgnoreServerEndpoint = "ignore-server-endpoint"
+	flagPromPrefix           = "prom-prefix"
+	flagDebug                = "debug"
+	flagReadTimeout          = "read-timeout"
+	flagMaxTimeouts          = "max-timeouts"
+	flagBufferSize           = "buffer-size"
+	flagSummaryInterval      = "summary-interval"
+	flagSubscribeToTimeNode  = "subscribe-to-time-node"
+	flagNode                 = "node"
+	flagConfig               = "config"
 
 	// Security flag names
 	flagSecurityMode    = "security-mode"
@@ -162,6 +163,7 @@ func parseFlags() (string, error) {
 	pflag.StringVar(&configFile, flagConfig, "", "Path to YAML configuration file")
 	pflag.Int(flagPort, defaultPort, "Port to publish metrics on")
 	pflag.String(flagEndpoint, defaultEndpoint, "OPC UA Endpoint to connect to")
+	pflag.Bool(flagIgnoreServerEndpoint, false, "Ignore endpoint URL provided by server during discovery phase. Some miss-configured servers provide unreslovable URLs.")
 	pflag.String(flagPromPrefix, "", "Prefix for prometheus metrics")
 	pflag.Bool(flagDebug, false, "Enable debug logging")
 	pflag.Duration(flagReadTimeout, defaultReadTimeout, "Timeout for OPCUA subscription messages")
@@ -217,6 +219,9 @@ func applyBasicFlagOverrides(cfg *config.Config) {
 	}
 	if viper.IsSet(flagEndpoint) {
 		cfg.Endpoint = viper.GetString(flagEndpoint)
+	}
+	if viper.IsSet(flagIgnoreServerEndpoint) {
+		cfg.IgnoreServerEndpoint = viper.GetBool(flagIgnoreServerEndpoint)
 	}
 	if viper.IsSet(flagPromPrefix) {
 		cfg.PromPrefix = viper.GetString(flagPromPrefix)
@@ -298,7 +303,7 @@ func applyNodeFlagOverrides(cfg *config.Config) error {
 }
 
 func setupOPCUAClient(ctx context.Context, cfg *config.Config) (*opcua.Client, error) {
-	connManager := connection.NewManager(cfg.Endpoint, cfg.Security, cfg.Timeouts, cfg.Debug)
+	connManager := connection.NewManager(cfg.Endpoint, cfg.IgnoreServerEndpoint, cfg.Security, cfg.Timeouts, cfg.Debug)
 	return connManager.Connect(ctx)
 }
 
