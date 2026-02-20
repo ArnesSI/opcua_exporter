@@ -37,10 +37,16 @@ func (r *Registry) RegisterNodeMapping(nodeMapping config.NodeMapping, promPrefi
 	if promPrefix != "" {
 		metricName = fmt.Sprintf("%s_%s", promPrefix, metricName)
 	}
-	
+
+	helpText := "From OPC UA"
+	if nodeMapping.MetricHelp != "" {
+		helpText = nodeMapping.MetricHelp
+	}
+
 	gauge := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: metricName,
-		Help: "From OPC UA",
+		Name:        metricName,
+		ConstLabels: nodeMapping.Labels,
+		Help:        helpText,
 	})
 	
 	if err := prometheus.Register(gauge); err != nil {
