@@ -47,7 +47,11 @@ type browseClient interface {
 // servers reject a request with too many operations at once
 // (StatusBadTooManyOperations) when an address-space level is wide. A value
 // <= 0 means no limit: each level is browsed in a single request.
-func ResolveBrowseNames(ctx context.Context, client browseClient, rootNodeID string, maxItemsPerRequest int, mappings []config.NodeMapping) ([]config.NodeMapping, error) {
+//
+// debug additionally logs each successful resolution (browse name -> NodeID);
+// not-found and ambiguous-match cases are always logged regardless of debug,
+// since those need attention whether or not debug logging is enabled.
+func ResolveBrowseNames(ctx context.Context, client browseClient, rootNodeID string, maxItemsPerRequest int, debug bool, mappings []config.NodeMapping) ([]config.NodeMapping, error) {
 	wanted := make(map[string][]int) // browseName -> indices into mappings needing that name
 	for i, m := range mappings {
 		if m.BrowseName != "" {
@@ -68,6 +72,7 @@ func ResolveBrowseNames(ctx context.Context, client browseClient, rootNodeID str
 		root = parsedRoot
 	}
 
+	log.Printf("resolving %d browse name(s) under root %s (this may take a while on large servers)", len(wanted), root)
 	matches := searchAddressSpace(ctx, client, root, maxItemsPerRequest, wanted)
 
 	var duplicates []string
@@ -84,7 +89,9 @@ func ResolveBrowseNames(ctx context.Context, client browseClient, rootNodeID str
 		case 1:
 			resolved := m
 			resolved.NodeName = ids[0].String()
-			log.Printf("resolved browse name %q -> %s for metric %q", m.BrowseName, resolved.NodeName, m.MetricName)
+			if debug {
+				log.Printf("resolved browse name %q -> %s for metric %q", m.BrowseName, resolved.NodeName, m.MetricName)
+			}
 			result = append(result, resolved)
 		default:
 			idStrs := make([]string, len(ids))

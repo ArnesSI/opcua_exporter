@@ -111,7 +111,7 @@ func TestResolveBrowseNames_NoBrowseNameSkipsTraversal(t *testing.T) {
 		{NodeName: "ns=1;s=Foo", MetricName: "foo"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	assert.Equal(t, mappings, result)
 	assert.Empty(t, fc.browseCalls, "Browse should never be called when no mapping uses BrowseName")
@@ -127,7 +127,7 @@ func TestResolveBrowseNames_UniqueMatchUnderDefaultRoot(t *testing.T) {
 		{BrowseName: "Temperature", MetricName: "temp_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, target.String(), result[0].NodeName)
@@ -146,7 +146,7 @@ func TestResolveBrowseNames_UniqueMatchUnderCustomRoot(t *testing.T) {
 		{BrowseName: "Temp", MetricName: "temp_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, root.String(), 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, root.String(), 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, target.String(), result[0].NodeName)
@@ -166,7 +166,7 @@ func TestResolveBrowseNames_ZeroMatchesDropsMappingOnly(t *testing.T) {
 		{BrowseName: "Missing", MetricName: "missing_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, "found_metric", result[0].MetricName)
@@ -189,7 +189,7 @@ func TestResolveBrowseNames_AmbiguousMatchIsFatal(t *testing.T) {
 		{BrowseName: "Temp", MetricName: "temp_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "Temp")
@@ -206,7 +206,7 @@ func TestResolveBrowseNames_TwoMappingsSharingOneBrowseName(t *testing.T) {
 		{BrowseName: "Shared", MetricName: "metric_b"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 	assert.Equal(t, target.String(), result[0].NodeName)
@@ -224,7 +224,7 @@ func TestResolveBrowseNames_MixedNodeNameAndBrowseNamePreservesOrder(t *testing.
 		{BrowseName: "Resolved", MetricName: "resolved_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 	assert.Equal(t, "ns=1;s=AlreadySet", result[0].NodeName)
@@ -247,7 +247,7 @@ func TestResolveBrowseNames_CycleIsDeduped(t *testing.T) {
 		{BrowseName: "Shared", MetricName: "shared_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, shared.String(), result[0].NodeName)
@@ -274,7 +274,7 @@ func TestResolveBrowseNames_DepthBoundary(t *testing.T) {
 		{BrowseName: "n" + itoa(uint16(maxBrowseDepth-1)), MetricName: "boundary_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, target.String(), result[0].NodeName)
@@ -297,7 +297,7 @@ func TestResolveBrowseNames_PastDepthBoundaryNotFound(t *testing.T) {
 		{BrowseName: "m" + itoa(uint16(maxBrowseDepth)), MetricName: "too_deep_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -318,7 +318,7 @@ func TestResolveBrowseNames_Pagination(t *testing.T) {
 		{BrowseName: "OnSecondPage", MetricName: "second_page_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, secondPageChild.String(), result[0].NodeName)
@@ -350,7 +350,7 @@ func TestResolveBrowseNames_WideLevelIsChunked(t *testing.T) {
 		{BrowseName: "sibling" + itoa(uint16(width-1)), MetricName: "last_sibling_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", chunkSize, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", chunkSize, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, target.String(), result[0].NodeName)
@@ -377,7 +377,7 @@ func TestResolveBrowseNames_NoChunkingWhenLimitUnset(t *testing.T) {
 		{BrowseName: "sibling0", MetricName: "sibling0_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 
@@ -394,7 +394,7 @@ func TestResolveBrowseNames_BrowseErrorIsNotFatal(t *testing.T) {
 		{BrowseName: "Anything", MetricName: "anything_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "", 0, false, mappings)
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -405,7 +405,7 @@ func TestResolveBrowseNames_InvalidRootIsFatal(t *testing.T) {
 		{BrowseName: "Anything", MetricName: "anything_metric"},
 	}
 
-	result, err := ResolveBrowseNames(context.Background(), fc, "ns=not-a-number;s=Foo", 0, mappings)
+	result, err := ResolveBrowseNames(context.Background(), fc, "ns=not-a-number;s=Foo", 0, false, mappings)
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Empty(t, fc.browseCalls)

@@ -400,7 +400,7 @@ func main() {
 	app.client = client
 	defer client.Close(ctx)
 
-	resolved, err := browse.ResolveBrowseNames(ctx, client, cfg.BrowseRoot, cfg.MaxItemsPerRequest, nodes)
+	resolved, err := browse.ResolveBrowseNames(ctx, client, cfg.BrowseRoot, cfg.MaxItemsPerRequest, cfg.Debug, nodes)
 	if err != nil {
 		app.shutdown(fmt.Errorf("error resolving browse names: %w", err))
 		return
