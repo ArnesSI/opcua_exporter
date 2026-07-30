@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/mwieczorkiewicz/opcua_exporter/internal/browse"
 	"github.com/mwieczorkiewicz/opcua_exporter/internal/config"
 	"github.com/mwieczorkiewicz/opcua_exporter/internal/connection"
 	"github.com/mwieczorkiewicz/opcua_exporter/internal/handlers"
@@ -32,19 +33,19 @@ const (
 	timeNodeMetricName string = "opcua_server_time" // Metric name for server time
 
 	// Configuration flag names
-	flagPort                        = "port"
-	flagEndpoint                    = "endpoint"
-	flagPromPrefix                  = "prom-prefix"
-	flagDebug                       = "debug"
-	flagReadTimeout                 = "read-timeout"
-	flagMaxTimeouts                 = "max-timeouts"
-	flagBufferSize                  = "buffer-size"
-	flagMaxMonitoredItemsPerRequest = "max-monitored-items-per-request"
-	flagIgnoreSubscriptionErrors    = "ignore-subscription-errors"
-	flagSummaryInterval             = "summary-interval"
-	flagSubscribeToTimeNode         = "subscribe-to-time-node"
-	flagNode                        = "node"
-	flagConfig                      = "config"
+	flagPort                     = "port"
+	flagEndpoint                 = "endpoint"
+	flagPromPrefix               = "prom-prefix"
+	flagDebug                    = "debug"
+	flagReadTimeout              = "read-timeout"
+	flagMaxTimeouts              = "max-timeouts"
+	flagBufferSize               = "buffer-size"
+	flagMaxItemsPerRequest       = "max-items-per-request"
+	flagIgnoreSubscriptionErrors = "ignore-subscription-errors"
+	flagSummaryInterval          = "summary-interval"
+	flagSubscribeToTimeNode      = "subscribe-to-time-node"
+	flagNode                     = "node"
+	flagConfig                   = "config"
 
 	// Security flag names
 	flagSecurityMode    = "security-mode"
@@ -64,13 +65,13 @@ const (
 	flagConnectionRetryTimeout = "connection-retry-timeout"
 
 	// Default values
-	defaultPort                        = 9686
-	defaultEndpoint                    = "opc.tcp://localhost:4096"
-	defaultReadTimeout                 = 5 * time.Second
-	defaultMaxTimeouts                 = 0
-	defaultBufferSize                  = 64
-	defaultMaxMonitoredItemsPerRequest = 0
-	defaultSummaryInterval             = 5 * time.Minute
+	defaultPort               = 9686
+	defaultEndpoint           = "opc.tcp://localhost:4096"
+	defaultReadTimeout        = 5 * time.Second
+	defaultMaxTimeouts        = 0
+	defaultBufferSize         = 64
+	defaultMaxItemsPerRequest = 0
+	defaultSummaryInterval    = 5 * time.Minute
 
 	// Default timeout values (matching current hardcoded values)
 	defaultDialTimeout            = 10 * time.Second
@@ -178,7 +179,7 @@ func parseFlags() (string, error) {
 	pflag.Duration(flagReadTimeout, defaultReadTimeout, "Timeout for OPCUA subscription messages")
 	pflag.Int(flagMaxTimeouts, defaultMaxTimeouts, "Max timeouts before quitting (0=disabled)")
 	pflag.Int(flagBufferSize, defaultBufferSize, "Message buffer size")
-	pflag.Int(flagMaxMonitoredItemsPerRequest, defaultMaxMonitoredItemsPerRequest, "Max nodes added to a subscription per CreateMonitoredItems request (0 = no limit, all nodes in one request)")
+	pflag.Int(flagMaxItemsPerRequest, defaultMaxItemsPerRequest, "Max nodes per CreateMonitoredItems or Browse request sent to the server at once (0 = no limit, all nodes in one request)")
 	pflag.Bool(flagIgnoreSubscriptionErrors, false, "Log rejected/failed subscription nodes instead of exiting the exporter")
 	pflag.Duration(flagSummaryInterval, defaultSummaryInterval, "Event count summary interval")
 	pflag.Bool(flagSubscribeToTimeNode, false, "Subscribe to server time node")
@@ -247,8 +248,8 @@ func applyBasicFlagOverrides(cfg *config.Config) {
 	if viper.IsSet(flagBufferSize) {
 		cfg.BufferSize = viper.GetInt(flagBufferSize)
 	}
-	if viper.IsSet(flagMaxMonitoredItemsPerRequest) {
-		cfg.MaxMonitoredItemsPerRequest = viper.GetInt(flagMaxMonitoredItemsPerRequest)
+	if viper.IsSet(flagMaxItemsPerRequest) {
+		cfg.MaxItemsPerRequest = viper.GetInt(flagMaxItemsPerRequest)
 	}
 	if viper.IsSet(flagIgnoreSubscriptionErrors) {
 		cfg.IgnoreSubscriptionErrors = viper.GetBool(flagIgnoreSubscriptionErrors)
@@ -399,6 +400,17 @@ func main() {
 	app.client = client
 	defer client.Close(ctx)
 
+	resolved, err := browse.ResolveBrowseNames(ctx, client, cfg.BrowseRoot, cfg.MaxItemsPerRequest, nodes)
+	if err != nil {
+		app.shutdown(fmt.Errorf("error resolving browse names: %w", err))
+		return
+	}
+	nodes = resolved
+	if len(nodes) == 0 {
+		app.shutdown(fmt.Errorf("no usable node mappings remain after browse name resolution"))
+		return
+	}
+
 	metricsRegistry := metrics.NewRegistry()
 	if err := metricsRegistry.CreateFromNodeMappings(nodes, cfg.PromPrefix, cfg.Debug); err != nil {
 		app.shutdown(fmt.Errorf("error creating metrics: %w", err))
@@ -406,7 +418,7 @@ func main() {
 	}
 
 	go func() {
-		if err := setupMonitor(ctx, client, metricsRegistry.GetHandlerMap(), cfg.BufferSize, cfg.ReadTimeout, cfg.MaxTimeouts, cfg.MaxMonitoredItemsPerRequest, cfg.IgnoreSubscriptionErrors, cfg.Debug); err != nil {
+		if err := setupMonitor(ctx, client, metricsRegistry.GetHandlerMap(), cfg.BufferSize, cfg.ReadTimeout, cfg.MaxTimeouts, cfg.MaxItemsPerRequest, cfg.IgnoreSubscriptionErrors, cfg.Debug); err != nil {
 			app.shutdown(fmt.Errorf("error setting up monitor: %w", err))
 		}
 	}()
@@ -432,7 +444,7 @@ func getClient(endpoint *string) (*opcua.Client, error) {
 }
 
 // Subscribe to all the nodes and update the appropriate prometheus metrics on change
-func setupMonitor(ctx context.Context, client *opcua.Client, handlerMap map[string][]metrics.HandlerRecord, bufferSize int, readTimeout time.Duration, maxTimeouts int, maxMonitoredItemsPerRequest int, ignoreSubscriptionErrors bool, debug bool) error {
+func setupMonitor(ctx context.Context, client *opcua.Client, handlerMap map[string][]metrics.HandlerRecord, bufferSize int, readTimeout time.Duration, maxTimeouts int, maxItemsPerRequest int, ignoreSubscriptionErrors bool, debug bool) error {
 	m, err := monitor.NewNodeMonitor(client)
 	if err != nil {
 		return fmt.Errorf("failed to create node monitor: %w", err)
@@ -452,7 +464,7 @@ func setupMonitor(ctx context.Context, client *opcua.Client, handlerMap map[stri
 	}
 	defer cleanup(ctx, sub)
 
-	if err := addNodesInChunks(ctx, sub, nodeList, maxMonitoredItemsPerRequest, ignoreSubscriptionErrors); err != nil {
+	if err := addNodesInChunks(ctx, sub, nodeList, maxItemsPerRequest, ignoreSubscriptionErrors); err != nil {
 		return fmt.Errorf("failed to add monitored items: %w", err)
 	}
 

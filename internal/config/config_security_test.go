@@ -294,7 +294,7 @@ func (s *SecurityConfigTestSuite) TestNodeMappingValidation() {
 				MetricName: "test_metric",
 			},
 			isValid: false,
-			errMsg:  "nodeName cannot be empty",
+			errMsg:  "exactly one of nodeName or browseName must be set",
 		},
 		{
 			name: "empty metric name",

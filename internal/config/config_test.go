@@ -40,11 +40,13 @@ func (s *ConfigTestSuite) clearEnvVars() {
 		"OPCUA_EXPORTER_BUFFER_SIZE",
 		"OPCUA_EXPORTER_SUMMARY_INTERVAL",
 		"OPCUA_EXPORTER_SUBSCRIBE_TO_TIME_NODE",
+		"OPCUA_EXPORTER_BROWSE_ROOT",
 	}
-	
+
 	for i := 0; i < 10; i++ {
 		envVars = append(envVars,
 			"OPCUA_EXPORTER_NODES_"+string(rune('0'+i))+"_NODENAME",
+			"OPCUA_EXPORTER_NODES_"+string(rune('0'+i))+"_BROWSENAME",
 			"OPCUA_EXPORTER_NODES_"+string(rune('0'+i))+"_METRICNAME",
 			"OPCUA_EXPORTER_NODES_"+string(rune('0'+i))+"_EXTRACTBIT",
 		)
@@ -161,12 +163,14 @@ func (s *ConfigTestSuite) TestFilterValidNodeMappings() {
 		{NodeName: "", MetricName: "metric2"},
 		{NodeName: "valid3", MetricName: ""},
 		{NodeName: "valid4", MetricName: "metric4"},
+		{BrowseName: "browse5", MetricName: "metric5"},
 	}
-	
+
 	valid := filterValidNodeMappings(mappings)
-	s.Assert().Len(valid, 2)
+	s.Assert().Len(valid, 3)
 	s.Assert().Equal("valid1", valid[0].NodeName)
 	s.Assert().Equal("valid4", valid[1].NodeName)
+	s.Assert().Equal("browse5", valid[2].BrowseName)
 }
 
 func (s *ConfigTestSuite) TestInvalidYAMLConfig() {
@@ -399,4 +403,73 @@ bufferSize: 0
 		s.Assert().Len(cfg.NodeMappings, 1)
 		s.Assert().Equal("ns=1;s=Node0", cfg.NodeMappings[0].NodeName)
 	})
+}
+
+func (s *ConfigTestSuite) TestNodeMappingValidate() {
+	s.Run("nodeName only is valid", func() {
+		m := NodeMapping{NodeName: "ns=1;s=Test", MetricName: "metric"}
+		s.Assert().NoError(m.Validate())
+	})
+
+	s.Run("browseName only is valid", func() {
+		m := NodeMapping{BrowseName: "Temperature", MetricName: "metric"}
+		s.Assert().NoError(m.Validate())
+	})
+
+	s.Run("neither set is an error", func() {
+		m := NodeMapping{MetricName: "metric"}
+		err := m.Validate()
+		s.Assert().Error(err)
+		s.Assert().Contains(err.Error(), "exactly one of nodeName or browseName")
+	})
+
+	s.Run("both set is an error", func() {
+		m := NodeMapping{NodeName: "ns=1;s=Test", BrowseName: "Temperature", MetricName: "metric"}
+		err := m.Validate()
+		s.Assert().Error(err)
+		s.Assert().Contains(err.Error(), "mutually exclusive")
+	})
+}
+
+func (s *ConfigTestSuite) TestLoadConfigFileWithBrowseName() {
+	testConfig := map[string]interface{}{
+		"browseRoot": "ns=4;s=|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application",
+		"nodes": []map[string]interface{}{
+			{"browseName": "Temp", "metricName": "temp_metric"},
+		},
+	}
+
+	s.writeYAMLConfig(testConfig)
+
+	cfg, err := Load(s.configFile)
+	s.Assert().NoError(err)
+	s.Assert().Equal("ns=4;s=|var|WAGO 750-8212 PFC200 G2 2ETH RS.Application", cfg.BrowseRoot)
+	s.Require().Len(cfg.NodeMappings, 1)
+	s.Assert().Equal("Temp", cfg.NodeMappings[0].BrowseName)
+	s.Assert().Empty(cfg.NodeMappings[0].NodeName)
+	s.Assert().Equal("temp_metric", cfg.NodeMappings[0].MetricName)
+}
+
+func (s *ConfigTestSuite) TestLoadEnvironmentVariablesWithBrowseName() {
+	s.Require().NoError(os.Setenv("OPCUA_EXPORTER_BROWSE_ROOT", "ns=4;s=|var|WAGO.Application"))
+	s.Require().NoError(os.Setenv("OPCUA_EXPORTER_NODES_0_BROWSENAME", "Temp"))
+	s.Require().NoError(os.Setenv("OPCUA_EXPORTER_NODES_0_METRICNAME", "temp_metric"))
+
+	cfg, err := Load("")
+	s.Assert().NoError(err)
+	s.Assert().Equal("ns=4;s=|var|WAGO.Application", cfg.BrowseRoot)
+	s.Require().Len(cfg.NodeMappings, 1)
+	s.Assert().Equal("Temp", cfg.NodeMappings[0].BrowseName)
+	s.Assert().Empty(cfg.NodeMappings[0].NodeName)
+	s.Assert().Equal("temp_metric", cfg.NodeMappings[0].MetricName)
+}
+
+func (s *ConfigTestSuite) TestLoadEnvironmentVariablesBothNodeNameAndBrowseNameIsError() {
+	s.Require().NoError(os.Setenv("OPCUA_EXPORTER_NODES_0_NODENAME", "ns=1;s=Test"))
+	s.Require().NoError(os.Setenv("OPCUA_EXPORTER_NODES_0_BROWSENAME", "Temp"))
+	s.Require().NoError(os.Setenv("OPCUA_EXPORTER_NODES_0_METRICNAME", "temp_metric"))
+
+	_, err := Load("")
+	s.Assert().Error(err)
+	s.Assert().Contains(err.Error(), "mutually exclusive")
 }

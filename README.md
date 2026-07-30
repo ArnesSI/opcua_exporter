@@ -32,7 +32,7 @@ Usage of opcua_exporter:
       --debug                       Enable debug logging
       --endpoint string             OPC UA Endpoint to connect to. (default "opc.tcp://localhost:4096")
       --ignore-subscription-errors  Log rejected/failed subscription nodes instead of exiting the exporter
-      --max-monitored-items-per-request int   Max nodes added to a subscription per request (0 = no limit, all nodes in one request)
+      --max-items-per-request int   Max nodes per CreateMonitoredItems or Browse request sent to the server at once (0 = no limit, all nodes in one request)
       --max-timeouts int            The exporter will quit trying after this many read timeouts (0 to disable).
       --node stringArray            Node mapping in format 'nodeId,metricName[,extractBit]' (can be repeated)
       --password string             Password for username/password authentication
@@ -249,10 +249,11 @@ All configuration options can be set via environment variables with the `OPCUA_E
 | `OPCUA_EXPORTER_READ_TIMEOUT` | `--read-timeout` | Timeout for subscription messages | `5s` |
 | `OPCUA_EXPORTER_MAX_TIMEOUTS` | `--max-timeouts` | Max timeouts before quit | `0` (disabled) |
 | `OPCUA_EXPORTER_BUFFER_SIZE` | `--buffer-size` | Message receive buffer size | `64` |
-| `OPCUA_EXPORTER_MAX_MONITORED_ITEMS_PER_REQUEST` | `--max-monitored-items-per-request` | Max nodes added to a subscription per request (0 = no limit) | `0` |
+| `OPCUA_EXPORTER_MAX_ITEMS_PER_REQUEST` | `--max-items-per-request` | Max nodes per CreateMonitoredItems or Browse request (0 = no limit) | `0` |
 | `OPCUA_EXPORTER_IGNORE_SUBSCRIPTION_ERRORS` | `--ignore-subscription-errors` | Log rejected/failed subscription nodes instead of exiting the exporter | `false` |
 | `OPCUA_EXPORTER_SUMMARY_INTERVAL` | `--summary-interval` | Event count summary frequency | `5m` |
 | `OPCUA_EXPORTER_SUBSCRIBE_TO_TIME_NODE` | `--subscribe-to-time-node` | Subscribe to server time node | `false` |
+| `OPCUA_EXPORTER_BROWSE_ROOT` | _(none)_ | Root NodeID to search under for `browseName` mappings (empty = Objects folder) | _(empty)_ |
 
 ### Security Configuration
 
@@ -272,7 +273,8 @@ All configuration options can be set via environment variables with the `OPCUA_E
 
 For indexed node mappings, use the format `OPCUA_EXPORTER_NODES_{INDEX}_{FIELD}`:
 
-- `OPCUA_EXPORTER_NODES_0_NODENAME` - Node identifier (required)
+- `OPCUA_EXPORTER_NODES_0_NODENAME` - Node identifier (required, unless `BROWSENAME` is set instead)
+- `OPCUA_EXPORTER_NODES_0_BROWSENAME` - Browse name to resolve to a NodeID at startup (required, unless `NODENAME` is set instead; see [Resolving Nodes by Browse Name](#resolving-nodes-by-browse-name))
 - `OPCUA_EXPORTER_NODES_0_METRICNAME` - Prometheus metric name (required)  
 - `OPCUA_EXPORTER_NODES_0_EXTRACTBIT` - Bit index for bit extraction (optional)
 
@@ -300,44 +302,79 @@ For legacy compatibility, you can still use separate node config files:
   metricName: circuit_breaker_three_tripped
 ```
 
-## Subscribing to Large Numbers of Nodes
+## Resolving Nodes by Browse Name
+
+If you don't know a node's full NodeID string but do know its browse name (and, optionally, a
+common ancestor node that all your nodes live under), you can configure `browseName` instead of
+`nodeName`. At startup the exporter searches the server's address space (up to 10 levels deep)
+for a node whose browse name matches, and resolves it to a concrete NodeID before subscribing.
+
+```yaml
+browseRoot: "ns=4;s=My.Application" # optional; defaults to the standard Objects folder (i=85)
+nodes:
+  - browseName: Temp
+    metricName: temp_metric
+  - browseName: AnotherSensor
+    metricName: another_sensor_metric
+```
+
+`browseRoot` is a global option (a raw NodeID string) that applies to every `browseName` lookup;
+it's useful when all your nodes live under one common ancestor but in different, unknown
+sub-branches below it. `nodeName` and `browseName` are mutually exclusive per node mapping - set
+exactly one.
+
+Resolution behavior:
+- If a browse name isn't found anywhere under the root, it's logged and that node mapping is
+  skipped - the exporter still starts with the rest of the mappings.
+- If a browse name matches more than one node, all matches are logged and the exporter **exits**
+  instead of starting, since silently picking one match could mean monitoring the wrong node.
+
+## Subscribing to and Browsing Large Numbers of Nodes
 
 The exporter subscribes to all configured nodes by sending a `CreateMonitoredItems` request to
-the OPC UA server. Many servers cap how many items can be created in a single request and
-respond with `StatusBadTooManyOperations` if that cap is exceeded - a limit of 100 items per
-request is common. If you configure more nodes than your server allows in one request, the
-exporter will fail to start with an error like:
+the OPC UA server, and (when resolving `browseName` mappings) searches the address space by
+sending `Browse` requests. Many servers cap how many operations can be included in a single
+request and respond with `StatusBadTooManyOperations` if that cap is exceeded - a limit of 100
+items per request is common. If you configure more nodes than your server allows in one request,
+or if a single level of the address space being browsed has more sibling nodes than the server
+allows, the exporter will fail to start (or fail to fully resolve browse names) with an error
+like:
 
 ```
 error setting up monitor: failed to add monitored items: The request could not be processed
 because it specified too many operations. StatusBadTooManyOperations (0x80100000)
 ```
 
-To work around this, set `maxMonitoredItemsPerRequest` to a value at or below your server's
-limit. The exporter will then add nodes to the subscription in batches of that size instead of
-all at once, issuing multiple `CreateMonitoredItems` requests as needed. This only affects how
-subscription setup is chunked - all nodes still end up monitored on the same subscription, and
-metrics are unaffected.
+```
+browse name resolution: Browse failed at depth 3 (1879 nodes): The request could not be
+processed because it specified too many operations. StatusBadTooManyOperations (0x80100000)
+```
 
-The default is `0`, meaning no limit: all nodes are added in a single request. Only set this
-option if your server rejects large subscription requests.
+To work around either case, set `maxItemsPerRequest` to a value at or below your server's limit.
+The exporter will then send both `CreateMonitoredItems` and `Browse` requests in batches of that
+size instead of all at once, issuing multiple requests as needed. This only affects how requests
+are chunked - all nodes still end up monitored on the same subscription (or found during the same
+browse-name search), and metrics are unaffected.
+
+The default is `0`, meaning no limit: all nodes are sent in a single request. Only set this
+option if your server rejects large requests.
 
 **Command Line:**
 
 ```bash
-./opcua_exporter --config nodes.yaml --max-monitored-items-per-request 100
+./opcua_exporter --config nodes.yaml --max-items-per-request 100
 ```
 
 **Environment Variable:**
 
 ```bash
-export OPCUA_EXPORTER_MAX_MONITORED_ITEMS_PER_REQUEST=100
+export OPCUA_EXPORTER_MAX_ITEMS_PER_REQUEST=100
 ```
 
 **YAML Config:**
 
 ```yaml
-maxMonitoredItemsPerRequest: 100
+maxItemsPerRequest: 100
 ```
 
 ## Bit Vectors

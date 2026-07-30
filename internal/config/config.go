@@ -13,6 +13,7 @@ import (
 // NodeMapping : Structure for representing mapping between OPCUA nodes and Prometheus metrics.
 type NodeMapping struct {
 	NodeName   string            `yaml:"nodeName"`             // OPC UA node identifier
+	BrowseName string            `yaml:"browseName,omitempty"` // OPC UA browse name to resolve to a NodeID at startup (mutually exclusive with NodeName)
 	MetricName string            `yaml:"metricName"`           // Prometheus metric name to emit
 	ExtractBit any               `yaml:"extractBit,omitempty"` // Optional numeric value. If present and positive, extract just this bit and emit it as a boolean metric
 	MetricHelp string            `yaml:"metricHelp,omitempty"` // Optional HELP string for metric
@@ -22,8 +23,11 @@ type NodeMapping struct {
 
 // Validate checks if the NodeMapping is valid
 func (n *NodeMapping) Validate() error {
-	if n.NodeName == "" {
-		return fmt.Errorf("nodeName cannot be empty")
+	if n.NodeName == "" && n.BrowseName == "" {
+		return fmt.Errorf("exactly one of nodeName or browseName must be set")
+	}
+	if n.NodeName != "" && n.BrowseName != "" {
+		return fmt.Errorf("nodeName and browseName are mutually exclusive, got both (nodeName=%q, browseName=%q)", n.NodeName, n.BrowseName)
 	}
 	if n.MetricName == "" {
 		return fmt.Errorf("metricName cannot be empty")
@@ -94,21 +98,22 @@ type ConnectionTimeouts struct {
 
 // Config holds all configuration values for the OPC UA exporter
 type Config struct {
-	Port                        int                `yaml:"port" mapstructure:"port"`
-	Endpoint                    string             `yaml:"endpoint" mapstructure:"endpoint"`
-	PromPrefix                  string             `yaml:"promPrefix" mapstructure:"promPrefix"`
-	ConfigFile                  string             `yaml:"configFile" mapstructure:"config"`
-	Debug                       bool               `yaml:"debug" mapstructure:"debug"`
-	ReadTimeout                 time.Duration      `yaml:"readTimeout" mapstructure:"readTimeout"`
-	MaxTimeouts                 int                `yaml:"maxTimeouts" mapstructure:"maxTimeouts"`
-	BufferSize                  int                `yaml:"bufferSize" mapstructure:"bufferSize"`
-	MaxMonitoredItemsPerRequest int                `yaml:"maxMonitoredItemsPerRequest" mapstructure:"maxMonitoredItemsPerRequest"`
-	IgnoreSubscriptionErrors    bool               `yaml:"ignoreSubscriptionErrors" mapstructure:"ignoreSubscriptionErrors"`
-	SummaryInterval             time.Duration      `yaml:"summaryInterval" mapstructure:"summaryInterval"`
-	SubscribeToTimeNode         bool               `yaml:"subscribeToTimeNode" mapstructure:"subscribeToTimeNode"`
-	NodeMappings                []NodeMapping      `yaml:"nodes" mapstructure:"nodes"`
-	Security                    SecurityConfig     `yaml:"security" mapstructure:"security"`
-	Timeouts                    ConnectionTimeouts `yaml:"timeouts" mapstructure:"timeouts"`
+	Port                     int                `yaml:"port" mapstructure:"port"`
+	Endpoint                 string             `yaml:"endpoint" mapstructure:"endpoint"`
+	PromPrefix               string             `yaml:"promPrefix" mapstructure:"promPrefix"`
+	ConfigFile               string             `yaml:"configFile" mapstructure:"config"`
+	Debug                    bool               `yaml:"debug" mapstructure:"debug"`
+	ReadTimeout              time.Duration      `yaml:"readTimeout" mapstructure:"readTimeout"`
+	MaxTimeouts              int                `yaml:"maxTimeouts" mapstructure:"maxTimeouts"`
+	BufferSize               int                `yaml:"bufferSize" mapstructure:"bufferSize"`
+	MaxItemsPerRequest       int                `yaml:"maxItemsPerRequest" mapstructure:"maxItemsPerRequest"`
+	IgnoreSubscriptionErrors bool               `yaml:"ignoreSubscriptionErrors" mapstructure:"ignoreSubscriptionErrors"`
+	SummaryInterval          time.Duration      `yaml:"summaryInterval" mapstructure:"summaryInterval"`
+	SubscribeToTimeNode      bool               `yaml:"subscribeToTimeNode" mapstructure:"subscribeToTimeNode"`
+	BrowseRoot               string             `yaml:"browseRoot,omitempty" mapstructure:"browseRoot"`
+	NodeMappings             []NodeMapping      `yaml:"nodes" mapstructure:"nodes"`
+	Security                 SecurityConfig     `yaml:"security" mapstructure:"security"`
+	Timeouts                 ConnectionTimeouts `yaml:"timeouts" mapstructure:"timeouts"`
 }
 
 // Load loads configuration from multiple sources in priority order:
@@ -130,10 +135,11 @@ func Load(configFile string) (*Config, error) {
 	v.SetDefault("readTimeout", 5*time.Second)
 	v.SetDefault("maxTimeouts", 0)
 	v.SetDefault("bufferSize", 64)
-	v.SetDefault("maxMonitoredItemsPerRequest", 0)
+	v.SetDefault("maxItemsPerRequest", 0)
 	v.SetDefault("ignoreSubscriptionErrors", false)
 	v.SetDefault("summaryInterval", 5*time.Minute)
 	v.SetDefault("subscribeToTimeNode", false)
+	v.SetDefault("browseRoot", "")
 	v.SetDefault("nodes", []NodeMapping{})
 
 	// Set security defaults (Anonymous access, no encryption)
@@ -161,10 +167,11 @@ func Load(configFile string) (*Config, error) {
 	v.BindEnv("readTimeout", "OPCUA_EXPORTER_READ_TIMEOUT")
 	v.BindEnv("maxTimeouts", "OPCUA_EXPORTER_MAX_TIMEOUTS")
 	v.BindEnv("bufferSize", "OPCUA_EXPORTER_BUFFER_SIZE")
-	v.BindEnv("maxMonitoredItemsPerRequest", "OPCUA_EXPORTER_MAX_MONITORED_ITEMS_PER_REQUEST")
+	v.BindEnv("maxItemsPerRequest", "OPCUA_EXPORTER_MAX_ITEMS_PER_REQUEST")
 	v.BindEnv("ignoreSubscriptionErrors", "OPCUA_EXPORTER_IGNORE_SUBSCRIPTION_ERRORS")
 	v.BindEnv("summaryInterval", "OPCUA_EXPORTER_SUMMARY_INTERVAL")
 	v.BindEnv("subscribeToTimeNode", "OPCUA_EXPORTER_SUBSCRIBE_TO_TIME_NODE")
+	v.BindEnv("browseRoot", "OPCUA_EXPORTER_BROWSE_ROOT")
 
 	// Security settings
 	v.BindEnv("security.securityMode", "OPCUA_EXPORTER_SECURITY_MODE")
@@ -246,19 +253,22 @@ func parseEnvNodeMappings() []NodeMapping {
 	var envNodeMappings []NodeMapping
 	for i := 0; ; i++ {
 		nodeNameEnv := fmt.Sprintf("OPCUA_EXPORTER_NODES_%d_NODENAME", i)
+		browseNameEnv := fmt.Sprintf("OPCUA_EXPORTER_NODES_%d_BROWSENAME", i)
 		metricNameEnv := fmt.Sprintf("OPCUA_EXPORTER_NODES_%d_METRICNAME", i)
 		extractBitEnv := fmt.Sprintf("OPCUA_EXPORTER_NODES_%d_EXTRACTBIT", i)
 
 		nodeName := os.Getenv(nodeNameEnv)
+		browseName := os.Getenv(browseNameEnv)
 		metricName := os.Getenv(metricNameEnv)
 
 		// Stop parsing when we encounter the first missing sequential mapping
-		if nodeName == "" || metricName == "" {
+		if (nodeName == "" && browseName == "") || metricName == "" {
 			break
 		}
 
 		nodeMapping := NodeMapping{
 			NodeName:   nodeName,
+			BrowseName: browseName,
 			MetricName: metricName,
 		}
 
@@ -277,7 +287,8 @@ func parseEnvNodeMappings() []NodeMapping {
 func filterValidNodeMappings(mappings []NodeMapping) []NodeMapping {
 	var validMappings []NodeMapping
 	for _, mapping := range mappings {
-		if mapping.NodeName != "" && mapping.MetricName != "" {
+		hasIdentifier := mapping.NodeName != "" || mapping.BrowseName != ""
+		if hasIdentifier && mapping.MetricName != "" {
 			validMappings = append(validMappings, mapping)
 		}
 	}
@@ -309,7 +320,7 @@ func applyZeroValueDefaults(config *Config) {
 		config.BufferSize = 64
 	}
 	// MaxTimeouts = 0 is valid and means no timeout limit, so we don't change it
-	// MaxMonitoredItemsPerRequest = 0 is valid and means no limit, so we don't change it
+	// MaxItemsPerRequest = 0 is valid and means no limit, so we don't change it
 }
 
 // AddNodeMapping adds a node mapping to the configuration with highest priority
